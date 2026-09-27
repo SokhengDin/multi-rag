@@ -10,6 +10,7 @@ from app.core.config import settings
 from app.core.device import check_device
 from app.utils import minio_storage as storage
 from app.db import session as db
+from app.middleware.http_middleware import HttpMiddleware
 from app import logger
 
 
@@ -49,6 +50,8 @@ app = FastAPI(
     lifespan=lifespan
     , title="Multi Rag API"
 )
+
+app.add_middleware(HttpMiddleware)
 
 app.add_middleware(
     CORSMiddleware

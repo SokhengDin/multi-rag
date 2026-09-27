@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime
 from typing   import Any
 
-from pgvector.sqlalchemy import HALFVEC
+from pgvector.sqlalchemy import HALFVEC, SPARSEVEC
 from sqlalchemy import (
     BigInteger,
     Computed,
@@ -21,9 +21,10 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, TSVECTOR, UUID
 from sqlalchemy.orm import mapped_column, DeclarativeBase, Mapped, relationship
 
-# BGE-M3 / Qwen3-Embedding-0.6B = 1024. Changing it needs a migration and re-embedding.
+# BGE-M3 / Qwen3-Embedding-0.6B = 1024. Changing it needs a migration and re-embedding :), thin carefully
 EMBEDDING_DIM = 1024
-
+# SPLADE-style sparse vectors use the BERT vocab size.
+SPARSE_DIM    = 30522
 
 class Base(DeclarativeBase):
     pass
@@ -110,6 +111,9 @@ class ChunkModel(Base):
     embedding       : Mapped[Any] = mapped_column(HALFVEC(EMBEDDING_DIM))
     embedding_model : Mapped[str] = mapped_column(String(255))            # repo@revision, to detect stale vectors
     content_tsv     : Mapped[Any] = mapped_column(TSVECTOR, Computed("to_tsvector('simple', content)", persisted=True))
+
+    sparse_embedding       : Mapped[Any | None] = mapped_column(SPARSEVEC(SPARSE_DIM))
+    sparse_embedding_model : Mapped[str | None] = mapped_column(Text)
 
     metadata_    : Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, server_default=text("'{}'::jsonb"))
 

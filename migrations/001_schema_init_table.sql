@@ -58,6 +58,9 @@ CREATE TABLE chunks (
     embedding_model  VARCHAR(255)  NOT NULL,       -- repo@revision, to detect stale vectors
     content_tsv      TSVECTOR      GENERATED ALWAYS AS (to_tsvector('simple', content)) STORED,
 
+    sparse_embedding       SPARSEVEC(30522),       -- SPLADE-style, BERT vocab size
+    sparse_embedding_model TEXT,
+
     metadata         JSONB         NOT NULL DEFAULT '{}'::jsonb,
 
     created_at       TIMESTAMPTZ   NOT NULL DEFAULT now(),
@@ -75,6 +78,10 @@ CREATE INDEX ix_chunks_metadata    ON chunks USING gin (metadata jsonb_path_ops)
 --   ORDER BY binary_quantize(embedding)::bit(1024) <~> binary_quantize(:query)::bit(1024)
 CREATE INDEX ix_chunks_embedding_bq ON chunks
     USING hnsw ((binary_quantize(embedding)::bit(1024)) bit_hamming_ops);
+
+-- Sparse HNSW supports at most 1,000 non-zero values per vector (cap with max_active_dims)
+CREATE INDEX ix_chunks_sparse_hnsw ON chunks
+    USING hnsw (sparse_embedding sparsevec_ip_ops);
 
 -- Ingestion jobs
 
