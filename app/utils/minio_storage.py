@@ -107,3 +107,8 @@ def presigned_url(
 
 def delete_object(object_name: str, bucket: str = settings.MINIO_BUCKET) -> None:
     client.remove_object(bucket_name=bucket, object_name=object_name)
+
+
+def delete_prefix(prefix: str, bucket: str = settings.MINIO_BUCKET) -> None:
+    for obj in client.list_objects(bucket_name=bucket, prefix=prefix, recursive=True):
+        client.remove_object(bucket_name=bucket, object_name=obj.object_name)

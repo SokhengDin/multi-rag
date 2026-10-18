@@ -1,13 +1,17 @@
 import asyncio
+from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from starlette.exceptions import HTTPException
 from contextlib import asynccontextmanager
 
+from app.api import api_router
 from app.schemas.base_schema import RESPONSE_SCHEMA
 from app.core.config import settings
 from app.core.device import check_device
+from app.providers.embedder import load_dense_embedder
 from app.utils import minio_storage as storage
 from app.db import session as db
 from app.middleware.http_middleware import HttpMiddleware
@@ -37,8 +41,9 @@ async def lifespan(
         else:
             logger.error(f"Database connection failed: {db_detail}")
 
-    storage_task = asyncio.create_task(check_storage())
-    db_task      = asyncio.create_task(check_db())
+    await asyncio.gather(check_storage(), check_db())
+
+    await asyncio.to_thread(load_dense_embedder)
 
     yield
 
@@ -61,6 +66,22 @@ app.add_middleware(
     , allow_headers=["*"]
 )
 
+app.include_router(api_router)
+
+
+@app.get("/", include_in_schema=False)
+def index():
+    return FileResponse(Path(__file__).parent / "web" / "index.html")
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    return JSONResponse(
+        status_code = exc.status_code,
+        content     = RESPONSE_SCHEMA(status=exc.status_code, message=str(exc.detail)).model_dump(),
+        headers     = exc.headers,
+    )
+
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     errors      = []
@@ -71,17 +92,13 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
             "type"      : error["type"]
         })
     
-    logger.error(f"[VALIDATION_ERROR] Request from {request.client.host if request.client else 'unknown'}")
-    logger.error(f"[VALIDATION_ERROR] Headers: {dict(request.headers)}")
-    logger.error(f"[VALIDATION_ERROR] Errors: {errors}")
-    
+    client = request.client.host if request.client else "unknown"
+    logger.error(f"[VALIDATION_ERROR] {request.method} {request.url.path} from {client}: {errors}")
+
     error_response = RESPONSE_SCHEMA(
         status  = 422,
         message = "Validation error",
-        data    = {
-            "errors": errors,
-            "body"  : exc.body
-        }
+        data    = {"errors": errors}
     )
     
     return JSONResponse(

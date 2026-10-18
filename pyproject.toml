@@ -1,24 +1,27 @@
 [project]
 name = "multi-rag"
 version = "0.1.0"
-description = "Add your description here"
+description = "Multimodal RAG research: VLM document encoding and hybrid search on Postgres + pgvector"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "docling>=2.140.0",
     "fastapi>=0.141.1",
     "loguru>=0.7.3",
     "minio>=7.2.20",
-    "mlx>=0.32.2",
-    "mlx-lm>=0.31.3",
-    "mlx-vlm>=0.7.3",
+    "mlx>=0.32.2; sys_platform == 'darwin'",
+    "mlx-lm>=0.31.3; sys_platform == 'darwin'",
+    "mlx-vlm>=0.7.3; sys_platform == 'darwin'",
     "pgvector>=0.5.0",
     "psycopg2-binary>=2.9.13",
     "pydantic>=2.13.5",
     "pydantic-settings>=2.15.0",
+    "pymupdf>=1.28.2",
     "python-decouple>=3.8",
+    "python-pptx>=1.0.2",
     "sentence-transformers>=6.1.0",
     "sqlalchemy>=2.1.1",
     "torch>=2.14.0",
-    "transformers[torch]>=5.17.0",
+    "transformers[torch]>=5.20.1",
     "uvicorn>=0.54.0",
 ]

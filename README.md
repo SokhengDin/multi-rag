@@ -17,13 +17,14 @@ No separate vector database (Qdrant, Milvus, Chroma) and no separate search engi
 
 ## RQ1: VLM encoding of large documents
 
-Each document is ingested three ways and the same queries are run against each:
+Each document is ingested four ways and the same queries are run against each:
 
 | Method | What becomes a chunk | `ingestion_jobs.parser` |
 |---|---|---|
 | Text-only (baseline) | Extracted text; images are skipped | `fast` |
 | Layout-aware parsing | Text plus tables as Markdown, with page and heading structure | `docling` |
-| VLM encoding | The above, plus a VLM caption for every figure, chart and slide (`modality = image`) | `docling` + VLM |
+| VLM encoding | The above, plus a VLM caption for every figure and chart (`modality = image`), embedded together with the image | `vlm` |
+| Page images | Every page or slide rendered as one image, embedded with its text layer. No VLM | `page` |
 
 Questions within RQ1:
 
@@ -38,7 +39,7 @@ Documents, chunks, vectors, full-text and metadata all live in one database and 
 
 | Technique | pgvector / Postgres feature | Question |
 |---|---|---|
-| Half-precision dense vectors | `halfvec(1024)` | Is recall the same as `vector` at half the storage? |
+| Half-precision dense vectors | `halfvec(768)` | Is recall the same as `vector` at half the storage? |
 | Binary-quantized HNSW index | `binary_quantize()` + `bit_hamming_ops` | How much recall is lost, and does re-ranking with the full vector win it back? |
 | Sparse (SPLADE-style) search | `sparsevec(30522)` + HNSW `sparsevec_ip_ops` | Is it usable within the 1,000 non-zero limit, and does it beat full-text search? |
 | Full-text search | `tsvector` + GIN index | How much does keyword search still add to hybrid results? |
@@ -87,7 +88,7 @@ Two binary vectors are compared with the Hamming distance, the number of differi
 H(b_q, b_d) = \text{popcount}(b_q \oplus b_d)
 ```
 
-A 1024-dim vector shrinks from 2 KB (`halfvec`) to 128 bytes. Search runs in two stages:
+A 768-dim vector shrinks from 1.5 KB (`halfvec`) to 96 bytes. Search runs in two stages:
 the binary index returns the top $N$ candidates by $H$, then those are re-ranked by the
 exact cosine distance.
 
@@ -128,10 +129,10 @@ It's slower but more accurate, so it only runs on the top candidates.
 - [x] Database schema and first migration
 - [x] MinIO storage helpers
 - [x] Model providers: LLM, VLM, embedders, reranker (PyTorch + MLX)
-- [ ] Ingestion pipeline (`app/rag/ingestion/`)
-- [ ] Retrieval pipeline (`app/rag/retrieval/`)
+- [x] Ingestion pipeline (`app/rag/ingestion/`)
+- [x] Retrieval pipeline (`app/rag/retrieval/`): dense, hybrid (RRF), reranker
 - [ ] Generation pipeline (`app/rag/generation/`)
-- [ ] API routes (`app/api/`)
+- [x] API routes (`app/api/`): documents, jobs, search
 - [ ] Test set: long PDFs and slide decks, with questions labeled text / table / figure
 - [ ] RQ1 evaluation: text-only vs layout-aware vs VLM encoding
 - [ ] RQ2 benchmarks: recall, latency, index size for each pgvector setup
@@ -143,7 +144,8 @@ It's slower but more accurate, so it only runs on the top candidates.
 | API | FastAPI + Uvicorn |
 | Database | Postgres 18 + pgvector (`halfvec` dense, `sparsevec` sparse, `tsvector` full-text) |
 | File storage | MinIO (S3-compatible) |
-| Models | Transformers / sentence-transformers (PyTorch), mlx-lm / mlx-vlm (Apple Silicon) |
+| Parsing | PyMuPDF and python-pptx (`fast`), Docling (`docling`, `vlm`) |
+| Models | EmbeddingGemma 2 (dense, text + image), bge-reranker-v2-m3, Transformers / sentence-transformers (PyTorch), mlx-lm / mlx-vlm (Apple Silicon) |
 | Config | `.env` read by `app/core/config.py` |
 
 ## Quick start
@@ -160,17 +162,48 @@ cp .env.example .env
 # 3. Start Postgres and MinIO
 docker compose up -d
 
-# 4. Create the tables (run once)
-docker exec -i pg-vector psql -U postgres -d multi_rag -v ON_ERROR_STOP=1 < migrations/001_schema_init_table.sql
+# 4. Create the tables (run each migration once, in order)
+for f in migrations/*.sql; do docker exec -i pg-vector psql -U postgres -d multi_rag -v ON_ERROR_STOP=1 < "$f"; done
 
 # 5. Run the API
 uv run python main.py
+
+# 6. Run the ingestion worker (separate terminal)
+uv run python -m app.rag.ingestion.worker
 ```
 
 - API docs: http://localhost:8000/docs
 - MinIO console: http://localhost:9001 (log in with `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY`)
 
 On startup the log shows the detected device and whether the database and MinIO connections worked.
+
+### Using the API
+
+```bash
+# Upload and queue (parser: fast | docling | vlm | page)
+curl -F file=@report.pdf -F parser=vlm localhost:8000/documents
+
+# Search with an image, optionally with text
+curl -F file=@chart.png -F query="revenue" -F top_k=5 localhost:8000/search/image
+
+# Watch the job, then search
+curl localhost:8000/jobs/<job_id>
+curl -X POST localhost:8000/search -H 'Content-Type: application/json' \
+     -d '{"query": "revenue by quarter", "mode": "hybrid", "top_k": 5, "rerank": true}'
+```
+
+| Route | Does |
+|---|---|
+| `POST /documents` | Upload a file and queue it. The same file again reuses the stored document |
+| `GET /documents`, `GET /documents/{id}` | List or read documents and their status |
+| `GET /documents/{id}/chunks` | The document's chunks, optionally by `modality` |
+| `POST /documents/{id}/ingest` | Queue again, e.g. with another parser. Chunks are replaced |
+| `DELETE /documents/{id}` | Delete the document, its chunks, jobs and files |
+| `GET /jobs`, `GET /jobs/{id}` | Ingestion job status |
+| `POST /search` | `dense` or `hybrid`, optional `rerank`, filters on documents, modality, parser and metadata |
+| `POST /search/image` | Dense search with an image (plus optional text). `filters` is the same object, sent as a JSON string |
+
+Each hit carries `dense_rank`, `fulltext_rank`, `sparse_rank` and `rerank_score`, so you can see which index found it.
 
 ## Configuration
 
@@ -183,7 +216,9 @@ All settings live in `.env`. See [.env.example](.env.example) for the full list.
 | `MINIO_*` | MinIO connection and bucket. `MINIO_SECRET_KEY` must be at least 8 characters |
 | `DEVICE` | `auto`, `cuda`, `mps`, `cpu` or `mlx` (see below) |
 | `QUANT_BITS` | Empty for full precision, or `4` / `8` |
-| `LLM_MODEL_ID`, `VLM_MODEL_ID`, `EMBEDDING_MODEL_ID` | Hugging Face model IDs |
+| `LLM_MODEL_ID`, `VLM_MODEL_ID`, `EMBEDDING_MODEL_ID`, `RERANKER_MODEL_ID` | Hugging Face model IDs |
+| `SPARSE_MODEL_ID` | Empty to skip sparse vectors, or a SPLADE model with the BERT vocab (30522) |
+| `CHUNK_SIZE`, `CHUNK_OVERLAP` | Chunk window and overlap, in embedding-model tokens |
 
 ### Choosing a device
 
@@ -196,6 +231,8 @@ All settings live in `.env`. See [.env.example](.env.example) for the full list.
 | `cpu` | CPU with PyTorch | Debugging, CI |
 
 If you ask for a device the machine doesn't have, the app stops with an error instead of quietly falling back to CPU.
+
+The `page` parser renders PPTX slides with LibreOffice (`brew install --cask libreoffice`); PDFs need nothing extra.
 
 `QUANT_BITS` needs an extra package: `uv add bitsandbytes` for CUDA, or `uv add optimum-quanto` for MPS / CPU. With MLX, pick a pre-quantized model instead.
 
@@ -210,15 +247,17 @@ app/
   providers/            LLM, VLM, embedders and reranker (PyTorch + MLX)
   middleware/           access log and JSON 500 handler
   utils/                MinIO storage helpers
-  rag/                  ingestion, retrieval, generation (to do)
-  api/                  routes (to do)
+  rag/ingestion/        parse, chunk, caption, embed; worker and job queue
+  rag/retrieval/        dense and hybrid SQL, reranking
+  rag/generation/       (to do)
+  api/                  documents, jobs and search routes
 migrations/             SQL migrations, applied in order
 docker-compose.yml      Postgres (pgvector) and MinIO
 ```
 
 ## Database
 
-Three tables, defined in [app/db/model.py](app/db/model.py) and created by [migrations/001_schema_init_table.sql](migrations/001_schema_init_table.sql):
+Three tables, defined in [app/db/model.py](app/db/model.py) and created by the files in [migrations/](migrations/):
 
 - **documents**: one row per uploaded file, with its processing status. The file itself is stored in MinIO.
 - **chunks**: pieces of a document (text, table or image caption) with their dense embedding, optional sparse embedding and full-text index.
@@ -226,4 +265,4 @@ Three tables, defined in [app/db/model.py](app/db/model.py) and created by [migr
 
 When you change `model.py`, add a new numbered file in `migrations/` with the same change.
 
-Changing `EMBEDDING_DIM` (1024) or `SPARSE_DIM` (30522) in `model.py` needs a migration and re-embedding every chunk.
+Changing `EMBEDDING_DIM` (768) or `SPARSE_DIM` (30522) in `model.py` needs a migration and re-embedding every chunk.

@@ -65,7 +65,7 @@ def setup_logging():
         log_dir / "app.log"
         , format=log_format
         , level ="DEBUG"
-        , colorize=True
+        , colorize=False
         , catch =True
     )
 
@@ -77,7 +77,7 @@ def setup_logging():
         , retention     ="30 days"
         , compression   ="zip"
         , level         ="DEBUG"
-        , colorize      =True
+        , colorize      =False
         , catch         =True
         , backtrace     =True
         , enqueue       =True
@@ -92,6 +92,9 @@ def setup_logging():
     logging.getLogger("uvicorn.access").handlers = []
     logging.getLogger("uvicorn.protocols.http").disabled = True
     logging.getLogger("uvicorn.protocols.http").handlers = []
+
+    for name in ("docling", "httpx", "RapidOCR"):
+        logging.getLogger(name).setLevel(logging.WARNING)
 
     logging.root.setLevel(logging.INFO)
     logging.root.addHandler(InterceptHandler())

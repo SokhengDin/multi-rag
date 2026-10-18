@@ -34,6 +34,12 @@ def check_device() -> str:
 
     return requested
 
+def check_torch_device() -> str:
+    """For models with no MLX version (embedders, reranker): mlx falls back to mps."""
+    device = check_device()
+    return "mps" if device == "mlx" else device
+
+
 def check_dtype(device: str) -> torch.dtype:
     if device == "cuda":
         return torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16

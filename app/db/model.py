@@ -21,8 +21,8 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, TSVECTOR, UUID
 from sqlalchemy.orm import mapped_column, DeclarativeBase, Mapped, relationship
 
-# BGE-M3 / Qwen3-Embedding-0.6B = 1024. Changing it needs a migration and re-embedding :), thin carefully
-EMBEDDING_DIM = 1024
+# EmbeddingGemma 2 = 768. Changing it needs a migration and re-embedding :), think carefully
+EMBEDDING_DIM = 768
 # SPLADE-style sparse vectors use the BERT vocab size.
 SPARSE_DIM    = 30522
 
@@ -139,7 +139,7 @@ class IngestionJobModel(Base):
     document_id : Mapped[uuid.UUID]  = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"))
 
     status      : Mapped[JobStatus]  = mapped_column(pg_enum(JobStatus, "job_status"), server_default=JobStatus.QUEUED.value)
-    parser      : Mapped[str]        = mapped_column(String(50), server_default="fast")   # "fast" or "docling"
+    parser      : Mapped[str]        = mapped_column(String(50), server_default="fast")   # "fast", "docling", "vlm" or "page"
     attempts    : Mapped[int]        = mapped_column(Integer, server_default="0")
     error       : Mapped[str | None] = mapped_column(Text)
 

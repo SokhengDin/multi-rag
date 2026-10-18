@@ -21,6 +21,8 @@ class ChunkIn(BaseModel):
     json_path       : str | None = None
     embedding       : list[float] = Field(min_length=EMBEDDING_DIM, max_length=EMBEDDING_DIM)
     embedding_model : str
+    sparse_embedding       : dict[int, float] | None = None
+    sparse_embedding_model : str | None = None
     metadata        : dict[str, Any] = METADATA_FIELD
 
 

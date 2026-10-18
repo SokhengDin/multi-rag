@@ -6,7 +6,8 @@ from pydantic import BaseModel, ConfigDict
 
 from app.db.model import JobStatus
 
-Parser = Literal["fast", "docling"]
+# fast: text only | docling: layout-aware | vlm: docling + VLM captions for figures | page: every page as an image
+Parser = Literal["fast", "docling", "vlm", "page"]
 
 
 class IngestionJobIn(BaseModel):
