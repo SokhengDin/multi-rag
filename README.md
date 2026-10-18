@@ -170,12 +170,35 @@ uv run python main.py
 
 # 6. Run the ingestion worker (separate terminal)
 uv run python -m app.rag.ingestion.worker
+
+# 7. Run the web app (separate terminal): http://localhost:5173
+cd web && bun install && bun run dev
 ```
 
 - API docs: http://localhost:8000/docs
 - MinIO console: http://localhost:9001 (log in with `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY`)
 
 On startup the log shows the detected device and whether the database and MinIO connections worked.
+
+### Run everything with Docker
+
+```bash
+docker compose up -d --build                                                # CPU
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build  # NVIDIA GPU
+docker compose up -d --scale worker=3                                        # more ingestion workers
+```
+
+| Service | Port | Runs |
+|---|---|---|
+| `pg-vector` | `DB_PORT` | Postgres + pgvector. Migrations run automatically on a fresh volume |
+| `api` | `API_PORT` (8000) | FastAPI |
+| `worker` | – | Ingestion worker. Scale it; jobs are claimed with `SKIP LOCKED` |
+| `web` | `WEB_PORT` (3000) | React app served by nginx |
+| `minio` | 9000, 9001 | Only with `--profile minio`, for a local MinIO |
+
+Containers read `.env`, but always use `DB_HOST=pg-vector`, and override the device and models (Docker can't use MPS or MLX): `DOCKER_DEVICE` (default `cpu`), `DOCKER_EMBEDDING_MODEL_ID`, `DOCKER_VLM_MODEL_ID`. `WEB_API_URL` is the API address the browser calls (default `http://localhost:8000`), baked in at build time. Models are cached in the `hf-cache` volume, shared by `api` and `worker`. Build with `--build-arg INSTALL_LIBREOFFICE=true` for the `page` parser on PPTX.
+
+On a Mac, running `api` and `worker` natively with `DEVICE=mlx` is much faster than the CPU containers.
 
 ### Using the API
 

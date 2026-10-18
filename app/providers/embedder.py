@@ -61,7 +61,7 @@ def _to_dicts(embeddings) -> list[dict[int, float]]:
 
     return result
 
-# Dense
+
 class DenseEmbedder:
     """One vector per chunk. Text, and images if the model supports them."""
     def __init__(
@@ -171,8 +171,6 @@ class MLXDenseEmbedder:
             return output.astype(mx.float32).tolist()
 
 
-# Sparse
-
 class SparseEmbedder:
     """Vocabulary-sized vector, mostly zeros. Returned as {token_index: weight}."""
 
@@ -218,8 +216,6 @@ class Reranker:
         """Returns [{"corpus_id": index_in_documents, "score": float}, ...], best first."""
         return self.model.rank(query, documents, top_k=top_k, batch_size=self.batch_size)
 
-
-# Loaded once per process
 
 @cache
 def load_dense_embedder() -> DenseEmbedder | MLXDenseEmbedder:

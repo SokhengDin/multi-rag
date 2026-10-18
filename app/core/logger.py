@@ -60,7 +60,6 @@ def setup_logging():
     logger.remove()
     logger.add(sys.stdout, format=log_format, colorize=True, diagnose=False, catch=True)
 
-    # Current
     logger.add(
         log_dir / "app.log"
         , format=log_format
@@ -69,7 +68,6 @@ def setup_logging():
         , catch =True
     )
 
-    # On backup
     logger.add(
         log_dir / "app-{time:DD-MM-YY}.log"
         , format        =log_format

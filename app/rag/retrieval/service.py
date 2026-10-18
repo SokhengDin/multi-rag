@@ -5,8 +5,8 @@ from sqlalchemy.orm import Session
 
 from app.providers.embedder import load_dense_embedder, load_reranker, load_sparse_embedder
 from app.rag.retrieval.queries import dense_search, hybrid_search
+from app.schemas.chunk_schema import chunk_image_url
 from app.schemas.search_schema import SearchFilters, SearchHit, SearchIn, SearchOut
-from app.utils import minio_storage as storage
 
 
 def search(session: Session, request: SearchIn) -> SearchOut:
@@ -71,4 +71,4 @@ def rerank(query: str, hits: list[SearchHit], top_k: int) -> list[SearchHit]:
 
 def _to_hit(row: dict) -> SearchHit:
     image_path = row.pop("image_path")
-    return SearchHit(**row, image_url=storage.presigned_url(image_path) if image_path else None)
+    return SearchHit(**row, image_url=chunk_image_url(row["document_id"], row["chunk_id"]) if image_path else None)

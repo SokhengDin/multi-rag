@@ -1,3 +1,20 @@
+x-backend: &backend
+  build: .
+  image: multi-rag-backend
+  restart: unless-stopped
+  env_file: .env
+  environment:
+    DB_HOST: pg-vector
+    DB_PORT: "5432"
+    DEVICE: ${DOCKER_DEVICE:-cpu}
+    EMBEDDING_MODEL_ID: ${DOCKER_EMBEDDING_MODEL_ID:-google/embeddinggemma-2}
+    VLM_MODEL_ID: ${DOCKER_VLM_MODEL_ID:-Qwen/Qwen2.5-VL-3B-Instruct}
+  volumes:
+    - hf-cache:/models
+  depends_on:
+    pg-vector:
+      condition: service_healthy
+
 services:
   pg-vector:
     image: pgvector/pgvector:pg18-trixie
@@ -11,15 +28,46 @@ services:
       - "${DB_PORT:-5432}:5432"
     volumes:
       - pg-vector-data:/var/lib/postgresql
+      - ./migrations:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 10s
       timeout: 5s
       retries: 5
 
+  api:
+    <<: *backend
+    container_name: multi-rag-api
+    command: ["python", "main.py"]
+    ports:
+      - "${API_PORT:-8000}:${API_PORT:-8000}"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:$${API_PORT:-8000}/jobs?limit=1')\""]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 300s
+
+  worker:
+    <<: *backend
+    command: ["python", "-m", "app.rag.ingestion.worker"]
+
+  web:
+    build:
+      context: ./web
+      args:
+        VITE_API_URL: ${WEB_API_URL:-http://localhost:8000}
+    container_name: multi-rag-web
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-3000}:80"
+    depends_on:
+      - api
+
   minio:
     image: minio/minio:latest
     container_name: minio
+    profiles: ["minio"]
     restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
@@ -39,3 +87,4 @@ services:
 volumes:
   pg-vector-data:
   minio-data:
+  hf-cache:

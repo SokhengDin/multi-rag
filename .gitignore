@@ -12,6 +12,9 @@ venv/
 build/
 dist/
 
+# Web
+node_modules/
+
 # Tooling caches
 .pytest_cache/
 .mypy_cache/

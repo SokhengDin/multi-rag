@@ -19,7 +19,7 @@ BINARY_ORDER = f"binary_quantize(c.embedding)::bit({EMBEDDING_DIM}) <~> binary_q
 
 HIT_COLUMNS = """
     c.id AS chunk_id, c.document_id, d.filename, c.chunk_index, c.modality,
-    c.content, c.page, c.heading_path, c.json_path, c.image_path, c.metadata->>'parser' AS parser
+    c.content, c.page, c.heading_path, c.json_path, c.image_path, c.metadata->>'parser' AS parser, c.metadata->'boxes' AS boxes
 """
 
 

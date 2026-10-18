@@ -38,6 +38,7 @@ class SearchHit(BaseModel):
     heading_path  : list[str] | None
     json_path     : str | None
     parser        : str | None = None
+    boxes         : list[list[float]] | None = Field(default=None, description="Where the chunk is on its page: [x0, y0, x1, y1] fractions, top-left origin")
     image_url     : str | None = None
     score         : float
     dense_rank    : int | None = None

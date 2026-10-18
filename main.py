@@ -1,9 +1,8 @@
 import asyncio
-from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException
 from contextlib import asynccontextmanager
 
@@ -67,11 +66,6 @@ app.add_middleware(
 )
 
 app.include_router(api_router)
-
-
-@app.get("/", include_in_schema=False)
-def index():
-    return FileResponse(Path(__file__).parent / "web" / "index.html")
 
 
 @app.exception_handler(HTTPException)

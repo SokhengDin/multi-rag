@@ -20,6 +20,8 @@ HEADING_RE      = re.compile(r"^(#{1,6})\s+(.+?)\s*#*\s*$")
 MAC_SOFFICE     = "/Applications/LibreOffice.app/Contents/MacOS/soffice"
 
 Headings = list[tuple[int, str]]
+# x0, y0, x1, y1 as fractions of the page, origin top-left
+Box = tuple[float, float, float, float]
 
 
 @dataclass
@@ -30,11 +32,10 @@ class Element:
     heading_path : list[str] | None = None
     json_path    : str | None       = None
     image        : Image | None     = None
+    boxes        : list[Box] | None = None
 
 
 def parse(data: bytes, filename: str, source_type: SourceType, parser: str) -> list[Element]:
-    """parser: "fast" (text only), "docling" (layout-aware), "vlm" (docling, keeping figures for captioning)
-    or "page" (every page or slide as one image)."""
     elements = _parse(data, filename, source_type, parser)
 
     # Postgres text can't hold NUL, which some PDF text layers contain
@@ -71,12 +72,15 @@ def _parse(data: bytes, filename: str, source_type: SourceType, parser: str) -> 
 def parse_pdf(data: bytes) -> list[Element]:
     import pymupdf
 
+    elements = []
     with pymupdf.open(stream=data, filetype="pdf") as pdf:
-        return [
-            Element(Modality.TEXT, text, page=number)
-            for number, page in enumerate(pdf, start=1)
-            if (text := page.get_text().strip())
-        ]
+        for number, page in enumerate(pdf, start=1):
+            width, height = page.rect.width, page.rect.height
+            for x0, y0, x1, y1, text, _, kind in page.get_text("blocks"):
+                if kind == 0 and text.strip():
+                    elements.append(Element(Modality.TEXT, text.strip(), page=number, boxes=[_box(x0, y0, x1, y1, width, height)]))
+
+    return elements
 
 
 def parse_pages(pdf: bytes) -> list[Element]:
@@ -88,7 +92,7 @@ def parse_pages(pdf: bytes) -> list[Element]:
         for number, page in enumerate(document, start=1):
             pixmap = page.get_pixmap(dpi=PAGE_DPI)
             image  = PILImage.frombytes("RGB", (pixmap.width, pixmap.height), pixmap.samples)
-            elements.append(Element(Modality.IMAGE, page.get_text().strip(), page=number, image=image))
+            elements.append(Element(Modality.IMAGE, page.get_text().strip(), page=number, image=image, boxes=[(0.0, 0.0, 1.0, 1.0)]))
 
     return elements
 
@@ -179,20 +183,44 @@ def parse_docling(data: bytes, filename: str, keep_images: bool) -> list[Element
     headings : Headings      = []
 
     for item, _ in document.iterate_items():
-        page = item.prov[0].page_no if getattr(item, "prov", None) else None
+        page, boxes = _docling_location(item, document)
 
         if isinstance(item, (TitleItem, SectionHeaderItem)):
             _push(headings, 0 if isinstance(item, TitleItem) else item.level, item.text)
-            elements.append(Element(Modality.TEXT, item.text, page, _path(headings)))
+            elements.append(Element(Modality.TEXT, item.text, page, _path(headings), boxes=boxes))
         elif isinstance(item, TableItem):
-            elements.append(Element(Modality.TABLE, item.export_to_markdown(doc=document), page, _path(headings)))
+            elements.append(Element(Modality.TABLE, item.export_to_markdown(doc=document), page, _path(headings), boxes=boxes))
         elif isinstance(item, PictureItem):
             if keep_images and (image := item.get_image(document)):
-                elements.append(Element(Modality.IMAGE, item.caption_text(document), page, _path(headings), image=image))
+                elements.append(Element(Modality.IMAGE, item.caption_text(document), page, _path(headings), image=image, boxes=boxes))
         elif isinstance(item, TextItem) and item.text.strip():
-            elements.append(Element(Modality.TEXT, item.text, page, _path(headings)))
+            elements.append(Element(Modality.TEXT, item.text, page, _path(headings), boxes=boxes))
 
     return elements
+
+
+def _docling_location(item, document) -> tuple[int | None, list[Box] | None]:
+    """Page of the item's first box, and its boxes on that page."""
+    if not getattr(item, "prov", None):
+        return None, None
+
+    page = item.prov[0].page_no
+    if page not in document.pages:
+        return page, None
+
+    size  = document.pages[page].size
+    boxes = []
+    for prov in item.prov:
+        if prov.page_no == page:
+            b = prov.bbox.to_top_left_origin(size.height)
+            boxes.append(_box(b.l, b.t, b.r, b.b, size.width, size.height))
+
+    return page, boxes
+
+
+def _box(x0: float, y0: float, x1: float, y1: float, width: float, height: float) -> Box:
+    clamp = lambda v: round(min(max(v, 0.0), 1.0), 4)
+    return clamp(x0 / width), clamp(y0 / height), clamp(x1 / width), clamp(y1 / height)
 
 
 def _push(headings: Headings, level: int, text: str) -> None:

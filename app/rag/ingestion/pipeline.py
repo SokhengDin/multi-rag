@@ -89,7 +89,7 @@ class IngestionPipeline:
             sparse_embedding       = SparseVector(sparse_vector, SPARSE_DIM) if sparse_vector else None,
             sparse_embedding_model = self.sparse.model_id if self.sparse else None,
 
-            metadata_ = {"parser": parser},
+            metadata_ = {"parser": parser, **({"boxes": chunk.boxes} if chunk.boxes else {})},
         )
 
     @staticmethod

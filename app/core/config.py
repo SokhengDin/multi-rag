@@ -32,7 +32,6 @@ class Settings(BaseSettings):
     CHUNK_SIZE    : int = config('CHUNK_SIZE', cast=int, default=512)
     CHUNK_OVERLAP : int = config('CHUNK_OVERLAP', cast=int, default=64)
 
-    # Reciprocal Rank Fusion constant: higher flattens the gap between top and lower ranks
     RRF_K : int = config('RRF_K', cast=int, default=60)
 
 settings = Settings()

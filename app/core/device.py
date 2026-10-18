@@ -16,7 +16,6 @@ def is_mlx_available() -> bool:
 
 
 def check_device() -> str:
-    """Return settings.DEVICE if available, or the best one when "auto": cuda > mps > cpu."""
     requested = settings.DEVICE.lower()
     available = available_devices()
 

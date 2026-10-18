@@ -1,6 +1,7 @@
 import hashlib
 import mimetypes
 import uuid
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -35,7 +36,7 @@ def submit_document(
     parser   : Parser = "fast",
     metadata : dict[str, Any] | None = None,
 ) -> IngestionJobModel:
-    """Store the file and queue a job. A file already uploaded (same sha256) is reused, so it can be re-ingested with another parser."""
+    """A file already uploaded (same sha256) is reused, so it can be re-ingested with another parser."""
     filename    = Path(filename).name
     source_type = source_type_of(filename)
     sha256      = hashlib.sha256(data).hexdigest()
@@ -69,6 +70,21 @@ def queue_job(session: Session, document: DocumentModel, parser: Parser) -> Inge
     session.refresh(job)
 
     return job
+
+
+@lru_cache(maxsize=8)
+def _stored_bytes(storage_path: str) -> bytes:
+    return storage.download_bytes(storage_path)
+
+
+def render_page(document: DocumentModel, page: int, dpi: int) -> bytes:
+    """PNG of one PDF page. Raises IndexError if the page doesn't exist."""
+    import pymupdf
+
+    with pymupdf.open(stream=_stored_bytes(document.storage_path), filetype="pdf") as pdf:
+        if not 1 <= page <= pdf.page_count:
+            raise IndexError(f"{document.filename} has {pdf.page_count} pages")
+        return pdf[page - 1].get_pixmap(dpi=dpi).tobytes("png")
 
 
 def delete_document(session: Session, document: DocumentModel) -> None:

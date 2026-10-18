@@ -1,4 +1,5 @@
 import io
+from collections.abc import Iterator
 from datetime import timedelta
 from typing import BinaryIO
 
@@ -103,6 +104,21 @@ def presigned_url(
     return client.presigned_get_object(
         bucket_name=bucket, object_name=object_name, expires=expires
     )
+
+
+def stream_object(object_name: str, bucket: str = settings.MINIO_BUCKET) -> tuple[Iterator[bytes], str, int]:
+    """(chunks, content_type, size). The connection is released once the chunks are consumed."""
+    stat     = client.stat_object(bucket_name=bucket, object_name=object_name)
+    response = client.get_object(bucket_name=bucket, object_name=object_name)
+
+    def chunks() -> Iterator[bytes]:
+        try:
+            yield from response.stream(64 * 1024)
+        finally:
+            response.close()
+            response.release_conn()
+
+    return chunks(), stat.content_type or "application/octet-stream", stat.size
 
 
 def delete_object(object_name: str, bucket: str = settings.MINIO_BUCKET) -> None:

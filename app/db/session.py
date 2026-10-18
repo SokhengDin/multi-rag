@@ -9,7 +9,6 @@ DATABASE_URL = f"postgresql+psycopg2://{settings.DB_USER}:{settings.DB_PASS}@{se
 engine = create_engine(
     DATABASE_URL
     , echo            = False
-    # Connection pool settings
     , poolclass       = QueuePool
     , pool_pre_ping   = True        
     , pool_size       = 15
@@ -18,7 +17,6 @@ engine = create_engine(
     , pool_recycle    = 1800
     , pool_use_lifo   = True 
 
-    # PostgreSQL specific connection args
     , connect_args = {
         "connect_timeout": 30
         , "keepalives": 1

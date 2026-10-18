@@ -8,6 +8,11 @@ from app.db.model import EMBEDDING_DIM, Modality
 from app.schemas.document_schema import METADATA_FIELD
 
 
+def chunk_image_url(document_id: uuid.UUID, chunk_id: uuid.UUID) -> str:
+    """API path that streams the chunk's image, relative to the API base URL."""
+    return f"/documents/{document_id}/chunks/{chunk_id}/image"
+
+
 class ChunkIn(BaseModel):
     document_id     : uuid.UUID
     parent_id       : uuid.UUID | None = None
@@ -43,4 +48,5 @@ class ChunkOut(BaseModel):
     json_path       : str | None
     embedding_model : str
     metadata        : dict[str, Any] = METADATA_FIELD
+    image_url       : str | None = None
     created_at      : datetime
