@@ -1,3 +1,4 @@
+import json
 import uuid
 from urllib.parse import quote
 
@@ -5,11 +6,11 @@ from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, 
 from fastapi.responses import Response, StreamingResponse
 from minio.error import S3Error
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, contains_eager
 
-from app.db.model import ChunkModel, DocumentModel, DocumentStatus, Modality, SourceType
+from app.db.model import ChunkModel, DocumentModel, IngestionJobModel, Modality, SourceType
 from app.db.session import get_session
-from app.rag.ingestion.service import delete_document, queue_job, render_page, submit_document
+from app.rag.ingestion.service import delete_document, describe_documents, queue_job, render_page, submit_document
 from app.schemas.base_schema import RESPONSE_SCHEMA
 from app.schemas.chunk_schema import ChunkOut, chunk_image_url
 from app.schemas.document_schema import DocumentOut
@@ -21,9 +22,10 @@ router = APIRouter(prefix="/documents", tags=["documents"])
 
 @router.post("", status_code=201, response_model=RESPONSE_SCHEMA[IngestionJobOut])
 def upload_document(
-    file    : UploadFile = File(...),
-    parser  : Parser     = Form("fast"),
-    session : Session    = Depends(get_session),
+    file     : UploadFile = File(...),
+    parser   : Parser     = Form("fast"),
+    metadata : str | None = Form(None, description='JSON object stored on the document and usable as a search filter, e.g. {"project": "churn"}'),
+    session  : Session    = Depends(get_session),
 ):
     """Store the file and queue it for ingestion. The same file uploaded again reuses the stored document."""
     data = file.file.read()
@@ -31,7 +33,14 @@ def upload_document(
         raise HTTPException(status_code=400, detail="File is empty")
 
     try:
-        job = submit_document(session, file.filename or "", data, parser)
+        values = json.loads(metadata) if metadata else {}
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=400, detail=f"metadata is not valid JSON: {e}")
+    if not isinstance(values, dict):
+        raise HTTPException(status_code=400, detail="metadata must be a JSON object")
+
+    try:
+        job = submit_document(session, file.filename or "", data, parser, values)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -40,23 +49,18 @@ def upload_document(
 
 @router.get("", response_model=RESPONSE_SCHEMA[list[DocumentOut]])
 def list_documents(
-    status  : DocumentStatus | None = None,
-    limit   : int                   = Query(50, ge=1, le=200),
-    offset  : int                   = Query(0, ge=0),
-    session : Session               = Depends(get_session),
+    limit   : int     = Query(50, ge=1, le=200),
+    offset  : int     = Query(0, ge=0),
+    session : Session = Depends(get_session),
 ):
-    stmt = select(DocumentModel).order_by(DocumentModel.created_at.desc()).limit(limit).offset(offset)
-    if status:
-        stmt = stmt.where(DocumentModel.status == status)
-
-    documents = [DocumentOut.model_validate(d) for d in session.scalars(stmt)]
-    return RESPONSE_SCHEMA(status=200, message="OK", data=documents)
+    documents = session.scalars(select(DocumentModel).order_by(DocumentModel.created_at.desc()).limit(limit).offset(offset)).all()
+    return RESPONSE_SCHEMA(status=200, message="OK", data=describe_documents(session, list(documents)))
 
 
 @router.get("/{document_id}", response_model=RESPONSE_SCHEMA[DocumentOut])
 def get_document(document_id: uuid.UUID, session: Session = Depends(get_session)):
     document = _get_or_404(session, document_id)
-    return RESPONSE_SCHEMA(status=200, message="OK", data=DocumentOut.model_validate(document))
+    return RESPONSE_SCHEMA(status=200, message="OK", data=describe_documents(session, [document])[0])
 
 
 @router.get("/{document_id}/file", response_class=StreamingResponse)
@@ -107,7 +111,7 @@ def reingest_document(
     parser      : Parser  = Body("fast", embed=True),
     session     : Session = Depends(get_session),
 ):
-    """Queue the document again, e.g. with another parser. Its chunks are replaced when the job runs."""
+    """Queue the document again. When the job finishes it replaces the chunks of the same parser; other parsers' chunks stay."""
     job = queue_job(session, _get_or_404(session, document_id), parser)
     return RESPONSE_SCHEMA(status=201, message="Document queued for ingestion", data=IngestionJobOut.model_validate(job))
 
@@ -115,6 +119,7 @@ def reingest_document(
 @router.get("/{document_id}/chunks", response_model=RESPONSE_SCHEMA[list[ChunkOut]])
 def list_chunks(
     document_id : uuid.UUID,
+    parser      : Parser | None   = None,
     modality    : Modality | None = None,
     limit       : int             = Query(100, ge=1, le=500),
     offset      : int             = Query(0, ge=0),
@@ -124,11 +129,15 @@ def list_chunks(
 
     stmt = (
         select(ChunkModel)
+        .join(IngestionJobModel, IngestionJobModel.id == ChunkModel.job_id)
+        .options(contains_eager(ChunkModel.job))
         .where(ChunkModel.document_id == document_id)
-        .order_by(ChunkModel.chunk_index)
+        .order_by(IngestionJobModel.parser, ChunkModel.chunk_index)
         .limit(limit)
         .offset(offset)
     )
+    if parser:
+        stmt = stmt.where(IngestionJobModel.parser == parser)
     if modality:
         stmt = stmt.where(ChunkModel.modality == modality)
 

@@ -1,18 +1,21 @@
 import { useRef, useState, type DragEvent } from "react";
 import { FileUp, Loader2 } from "lucide-react";
-import { api, PARSERS, type Parser } from "../lib/api";
+import { api, parseObject, PARSERS, type Parser } from "../lib/api";
 import { useToast } from "./Toast";
-import { Card } from "./ui";
+import { Card, inputClass } from "./ui";
 
 const ACCEPT = ".pdf,.pptx,.md,.markdown,.txt,.json";
 
 export function UploadPanel({ onUploaded }: { onUploaded: () => void }) {
   const [files, setFiles] = useState<File[]>([]);
   const [parser, setParser] = useState<Parser>("vlm");
+  const [metadata, setMetadata] = useState("");
   const [busy, setBusy] = useState(false);
   const [dragging, setDragging] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   const toast = useToast();
+
+  const parsedMetadata = parseObject(metadata);
 
   const onDrop = (e: DragEvent) => {
     e.preventDefault();
@@ -25,7 +28,7 @@ export function UploadPanel({ onUploaded }: { onUploaded: () => void }) {
     let queued = 0;
     for (const file of files) {
       try {
-        await api.upload(file, parser);
+        await api.upload(file, parser, parsedMetadata ?? undefined);
         queued++;
       } catch (err) {
         toast(`${file.name}: ${(err as Error).message}`, "error");
@@ -69,9 +72,17 @@ export function UploadPanel({ onUploaded }: { onUploaded: () => void }) {
       </div>
       <p className="mt-1.5 min-h-8 text-xs text-slate-500">{PARSERS[parser]}</p>
 
+      <input
+        value={metadata}
+        onChange={(e) => setMetadata(e.target.value)}
+        placeholder='Metadata, optional: {"project": "churn"}'
+        className={`${inputClass} mt-1 font-mono text-xs ${parsedMetadata === undefined ? "border-rose-400" : ""}`}
+      />
+      {parsedMetadata === undefined && <p className="mt-1 text-xs text-rose-600">Must be a JSON object</p>}
+
       <button
         onClick={upload}
-        disabled={!files.length || busy}
+        disabled={!files.length || busy || parsedMetadata === undefined}
         className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-40"
       >
         {busy && <Loader2 className="size-4 animate-spin" />}

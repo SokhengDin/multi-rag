@@ -1,10 +1,9 @@
 import { FileText, RefreshCw } from "lucide-react";
-import type { Document, Job } from "../lib/api";
-import { Card, StatusBadge } from "./ui";
+import type { Document } from "../lib/api";
+import { Card, IngestionBadge } from "./ui";
 
 interface Props {
   docs: Document[];
-  jobs: Record<string, Job>;
   selected: Set<string>;
   onToggle: (id: string) => void;
   onClearSelection: () => void;
@@ -12,7 +11,7 @@ interface Props {
   onRefresh: () => void;
 }
 
-export function DocumentList({ docs, jobs, selected, onToggle, onClearSelection, onOpen, onRefresh }: Props) {
+export function DocumentList({ docs, selected, onToggle, onClearSelection, onOpen, onRefresh }: Props) {
   return (
     <Card className="flex min-h-0 flex-1 flex-col">
       <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
@@ -41,12 +40,12 @@ export function DocumentList({ docs, jobs, selected, onToggle, onClearSelection,
                   <FileText className="size-3.5 shrink-0 text-slate-400" />
                   <span className="truncate">{doc.filename}</span>
                 </p>
-                <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-slate-500">
-                  <StatusBadge status={doc.status} />
-                  <span>{doc.num_chunks} chunks</span>
-                  {jobs[doc.id] && <span>· {jobs[doc.id].parser}</span>}
+                <div className="mt-1 flex flex-wrap items-center gap-1">
+                  {doc.ingestions.map((ingestion) => <IngestionBadge key={ingestion.parser} ingestion={ingestion} />)}
                 </div>
-                {doc.error && <p className="mt-1 line-clamp-2 text-xs text-rose-600">{doc.error}</p>}
+                {doc.ingestions.filter((i) => i.status === "failed").map((i) => (
+                  <p key={i.parser} className="mt-1 line-clamp-2 text-xs text-rose-600">{i.parser}: {i.error}</p>
+                ))}
               </button>
             </li>
           ))}

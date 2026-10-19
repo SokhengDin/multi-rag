@@ -14,7 +14,7 @@ class SearchFilters(BaseModel):
     document_ids : list[uuid.UUID] | None = None
     modalities   : list[Modality] | None  = None
     parser       : Parser | None          = None
-    metadata     : dict[str, Any] | None  = Field(default=None, description="Chunks whose metadata contains these keys and values")
+    metadata     : dict[str, Any] | None  = Field(default=None, description="Only documents whose upload metadata contains these keys and values")
 
 
 class SearchIn(BaseModel):
@@ -37,7 +37,8 @@ class SearchHit(BaseModel):
     page          : int | None
     heading_path  : list[str] | None
     json_path     : str | None
-    parser        : str | None = None
+    job_id        : uuid.UUID
+    parser        : Parser
     boxes         : list[list[float]] | None = Field(default=None, description="Where the chunk is on its page: [x0, y0, x1, y1] fractions, top-left origin")
     image_url     : str | None = None
     score         : float

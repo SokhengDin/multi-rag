@@ -104,4 +104,4 @@ def setup_logging():
     return logger
 
 
-logger  = setup_logging()
+setup_logging()

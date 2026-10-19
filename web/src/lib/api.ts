@@ -3,10 +3,19 @@ export const API_URL = (import.meta.env.VITE_API_URL ?? "http://localhost:8000")
 export type Modality = "text" | "table" | "image";
 export type Parser = "fast" | "docling" | "vlm" | "page";
 export type SearchMode = "dense" | "hybrid";
-export type DocumentStatus = "pending" | "processing" | "ready" | "failed";
 export type JobStatus = "queued" | "running" | "done" | "failed";
 /** [x0, y0, x1, y1] as fractions of the page, origin top-left */
 export type Box = [number, number, number, number];
+
+/** Per parser: the latest job, and how many of that parser's chunks are searchable now */
+export interface Ingestion {
+  parser: Parser;
+  job_id: string;
+  status: JobStatus;
+  error: string | null;
+  num_chunks: number;
+  finished_at: string | null;
+}
 
 export interface Document {
   id: string;
@@ -14,9 +23,9 @@ export interface Document {
   mime_type: string;
   source_type: string;
   size_bytes: number;
-  status: DocumentStatus;
-  error: string | null;
-  num_chunks: number;
+  sha256: string;
+  metadata: Record<string, unknown>;
+  ingestions: Ingestion[];
   created_at: string;
 }
 
@@ -27,12 +36,15 @@ export interface Job {
   parser: Parser;
   attempts: number;
   error: string | null;
+  num_chunks: number;
   created_at: string;
 }
 
 export interface Chunk {
   id: string;
   document_id: string;
+  job_id: string;
+  parser: Parser;
   chunk_index: number;
   modality: Modality;
   content: string;
@@ -40,8 +52,7 @@ export interface Chunk {
   page: number | null;
   heading_path: string[] | null;
   json_path: string | null;
-  embedding_model: string;
-  metadata: Record<string, unknown>;
+  boxes: Box[] | null;
   image_url: string | null;
 }
 
@@ -49,13 +60,14 @@ export interface Hit {
   chunk_id: string;
   document_id: string;
   filename: string;
+  job_id: string;
   chunk_index: number;
   modality: Modality;
   content: string;
   page: number | null;
   heading_path: string[] | null;
   json_path: string | null;
-  parser: Parser | null;
+  parser: Parser;
   boxes: Box[] | null;
   image_url: string | null;
   score: number;
@@ -77,6 +89,7 @@ export interface Filters {
   document_ids?: string[];
   modalities?: Modality[];
   parser?: Parser;
+  metadata?: Record<string, unknown>;
 }
 
 export interface TextSearch {
@@ -114,13 +127,13 @@ const json = (method: string, data: unknown): RequestInit => ({
 
 export const api = {
   documents: () => request<Document[]>("/documents?limit=200"),
-  jobs: () => request<Job[]>("/jobs?limit=200"),
-  chunks: (id: string) => request<Chunk[]>(`/documents/${id}/chunks?limit=500`),
+  chunks: (id: string, parser: Parser) => request<Chunk[]>(`/documents/${id}/chunks?parser=${parser}&limit=500`),
 
-  upload: (file: File, parser: Parser) => {
+  upload: (file: File, parser: Parser, metadata?: Record<string, unknown>) => {
     const form = new FormData();
     form.append("file", file);
     form.append("parser", parser);
+    if (metadata && Object.keys(metadata).length) form.append("metadata", JSON.stringify(metadata));
     return request<Job>("/documents", { method: "POST", body: form });
   },
   reingest: (id: string, parser: Parser) => request<Job>(`/documents/${id}/ingest`, json("POST", { parser })),
@@ -144,7 +157,20 @@ export const fileUrl = (documentId: string, filename: string, page?: number | nu
 /** Image paths from the API are relative to it */
 export const assetUrl = (path: string) => (/^https?:\/\//.test(path) ? path : `${API_URL}${path}`);
 
-export const isPdf =(filename: string) => filename.toLowerCase().endsWith(".pdf");
+export const isPdf = (filename: string) => filename.toLowerCase().endsWith(".pdf");
+
+/** null for empty input, undefined when it isn't a JSON object */
+export function parseObject(text: string): Record<string, unknown> | null | undefined {
+  if (!text.trim()) return null;
+  try {
+    const value = JSON.parse(text);
+    return value && typeof value === "object" && !Array.isArray(value) ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export const isBusy =(ingestion: Ingestion) => ingestion.status === "queued" || ingestion.status === "running";
 
 export const pageImageUrl = (documentId: string, page: number, dpi = 110) => `${API_URL}/documents/${documentId}/pages/${page}?dpi=${dpi}`;
 

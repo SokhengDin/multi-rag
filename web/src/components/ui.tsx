@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { DocumentStatus, Modality } from "../lib/api";
+import { isBusy, type Ingestion, type JobStatus, type Modality } from "../lib/api";
 
 const MODALITY_STYLE: Record<Modality, string> = {
   text: "bg-sky-50 text-sky-700 ring-sky-200",
@@ -7,10 +7,10 @@ const MODALITY_STYLE: Record<Modality, string> = {
   image: "bg-pink-50 text-pink-700 ring-pink-200",
 };
 
-const STATUS_STYLE: Record<DocumentStatus, string> = {
-  ready: "bg-emerald-50 text-emerald-700 ring-emerald-200",
-  pending: "bg-slate-50 text-slate-600 ring-slate-200",
-  processing: "bg-amber-50 text-amber-700 ring-amber-200",
+const STATUS_STYLE: Record<JobStatus, string> = {
+  done: "bg-emerald-50 text-emerald-700 ring-emerald-200",
+  queued: "bg-slate-50 text-slate-600 ring-slate-200",
+  running: "bg-amber-50 text-amber-700 ring-amber-200",
   failed: "bg-rose-50 text-rose-700 ring-rose-200",
 };
 
@@ -20,12 +20,16 @@ export function Badge({ children, className = "bg-slate-50 text-slate-600 ring-s
 
 export const ModalityBadge = ({ modality }: { modality: Modality }) => <Badge className={MODALITY_STYLE[modality]}>{modality}</Badge>;
 
-export function StatusBadge({ status }: { status: DocumentStatus }) {
+/** e.g. "vlm · 94" when done, "vlm · running", "vlm · failed" */
+export function IngestionBadge({ ingestion }: { ingestion: Ingestion }) {
+  const label = ingestion.status === "done" ? ingestion.num_chunks : ingestion.status;
   return (
-    <Badge className={STATUS_STYLE[status]}>
-      {status === "processing" && <span className="size-1.5 animate-pulse rounded-full bg-amber-500" />}
-      {status}
-    </Badge>
+    <span title={ingestion.error ?? `${ingestion.parser}: ${ingestion.status}, ${ingestion.num_chunks} chunks searchable`}>
+      <Badge className={STATUS_STYLE[ingestion.status]}>
+        {isBusy(ingestion) && <span className="size-1.5 animate-pulse rounded-full bg-amber-500" />}
+        {ingestion.parser} · {label}
+      </Badge>
+    </span>
   );
 }
 

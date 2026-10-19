@@ -5,11 +5,12 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.db.model import DocumentModel, IngestionJobModel, SourceType
-from app.schemas.ingestion_job_schema import Parser
+from app.db.model import ChunkModel, DocumentModel, IngestionJobModel, SourceType
+from app.schemas.document_schema import DocumentOut
+from app.schemas.ingestion_job_schema import IngestionSummary, Parser
 from app.utils import minio_storage as storage
 
 EXTENSIONS = {
@@ -70,6 +71,43 @@ def queue_job(session: Session, document: DocumentModel, parser: Parser) -> Inge
     session.refresh(job)
 
     return job
+
+
+def describe_documents(session: Session, documents: list[DocumentModel]) -> list[DocumentOut]:
+    """Documents with, per parser, the latest job and the number of chunks searchable now."""
+    ids = [d.id for d in documents]
+
+    latest_jobs = session.scalars(
+        select(IngestionJobModel)
+        .where(IngestionJobModel.document_id.in_(ids))
+        .distinct(IngestionJobModel.document_id, IngestionJobModel.parser)
+        .order_by(IngestionJobModel.document_id, IngestionJobModel.parser, IngestionJobModel.created_at.desc())
+    )
+    live_chunks = {
+        (document_id, parser): count
+        for document_id, parser, count in session.execute(
+            select(ChunkModel.document_id, IngestionJobModel.parser, func.count())
+            .join(IngestionJobModel, IngestionJobModel.id == ChunkModel.job_id)
+            .where(ChunkModel.document_id.in_(ids))
+            .group_by(ChunkModel.document_id, IngestionJobModel.parser)
+        )
+    }
+
+    summaries: dict[uuid.UUID, list[IngestionSummary]] = {}
+    for job in latest_jobs:
+        summaries.setdefault(job.document_id, []).append(IngestionSummary(
+            parser      = job.parser,
+            job_id      = job.id,
+            status      = job.status,
+            error       = job.error,
+            num_chunks  = live_chunks.get((job.document_id, job.parser), 0),
+            finished_at = job.finished_at,
+        ))
+
+    return [
+        DocumentOut.model_validate(d).model_copy(update={"ingestions": summaries.get(d.id, [])})
+        for d in documents
+    ]
 
 
 @lru_cache(maxsize=8)

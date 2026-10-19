@@ -31,7 +31,7 @@ Questions within RQ1:
 - **Quality:** do VLM captions raise recall@k and answer correctness, especially for questions whose answer is only in a figure or table?
 - **Length:** does retrieval quality drop as documents get longer (10 → 100 → 500+ pages), and does VLM encoding slow that drop?
 - **Cost:** how much ingestion time and memory does the VLM add per page, on CUDA, MPS and MLX, with and without quantization?
-- **Structure:** do page numbers, heading paths and parent chunks (`page`, `heading_path`, `parent_id`) help ranking on long documents?
+- **Structure:** do page numbers and heading paths (`page`, `heading_path`) help ranking on long documents?
 
 ## RQ2: pgvector as the only store
 
@@ -220,7 +220,7 @@ curl -X POST localhost:8000/search -H 'Content-Type: application/json' \
 | `POST /documents` | Upload a file and queue it. The same file again reuses the stored document |
 | `GET /documents`, `GET /documents/{id}` | List or read documents and their status |
 | `GET /documents/{id}/chunks` | The document's chunks, optionally by `modality` |
-| `POST /documents/{id}/ingest` | Queue again, e.g. with another parser. Chunks are replaced |
+| `POST /documents/{id}/ingest` | Ingest with another parser (kept alongside the others), or re-ingest one (replaces only that parser's chunks) |
 | `DELETE /documents/{id}` | Delete the document, its chunks, jobs and files |
 | `GET /jobs`, `GET /jobs/{id}` | Ingestion job status |
 | `POST /search` | `dense` or `hybrid`, optional `rerank`, filters on documents, modality, parser and metadata |
@@ -282,9 +282,11 @@ docker-compose.yml      Postgres (pgvector) and MinIO
 
 Three tables, defined in [app/db/model.py](app/db/model.py) and created by the files in [migrations/](migrations/):
 
-- **documents**: one row per uploaded file, with its processing status. The file itself is stored in MinIO.
-- **chunks**: pieces of a document (text, table or image caption) with their dense embedding, optional sparse embedding and full-text index.
-- **ingestion_jobs**: the processing queue. A worker picks the oldest `queued` job.
+- **documents**: one row per uploaded file (stored in MinIO), with optional `metadata` set at upload and usable as a search filter.
+- **ingestion_jobs**: one row per ingestion run of a document with one parser. Holds its status, attempts, error, chunk count and the embedding models used. A worker takes the oldest `queued` job; storage or database outages are retried up to 3 times.
+- **chunks**: pieces of a document (text, table, figure or page) produced by one job, with page location boxes, dense and optional sparse embeddings, and full-text index.
+
+A document keeps one set of chunks per parser, so `fast`, `docling`, `vlm` and `page` can be searched side by side. Re-ingesting with a parser replaces only that parser's chunks, once the new job succeeds.
 
 When you change `model.py`, add a new numbered file in `migrations/` with the same change.
 

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { BookOpen, Layers } from "lucide-react";
-import { api, API_URL, type Document, type Filters, type Hit, type Job, type SearchMode } from "./lib/api";
+import { api, API_URL, isBusy, type Document, type Filters, type Hit, type Parser, type SearchMode } from "./lib/api";
 import { DocumentDrawer } from "./components/DocumentDrawer";
 import { DocumentList } from "./components/DocumentList";
 import { ImageModal } from "./components/ImageModal";
@@ -18,23 +18,19 @@ const COMPARE: { label: string; mode: SearchMode; rerank: boolean }[] = [
 
 export default function App() {
   const [docs, setDocs] = useState<Document[]>([]);
-  const [jobs, setJobs] = useState<Record<string, Job>>({});
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [columns, setColumns] = useState<ResultColumn[]>([]);
   const [lastQuery, setLastQuery] = useState("");
   const [searching, setSearching] = useState(false);
-  const [openDoc, setOpenDoc] = useState<{ id: string; focusChunkId?: string } | null>(null);
+  const [openDoc, setOpenDoc] = useState<{ id: string; focusChunkId?: string; focusParser?: Parser } | null>(null);
   const [image, setImage] = useState<string | null>(null);
   const [pageHit, setPageHit] = useState<Hit | null>(null);
   const toast = useToast();
 
   const refresh = useCallback(async () => {
     try {
-      const [docList, jobList] = await Promise.all([api.documents(), api.jobs()]);
-      const latest: Record<string, Job> = {};
-      for (const job of jobList) latest[job.document_id] ??= job;
+      const docList = await api.documents();
       setDocs(docList);
-      setJobs(latest);
       setSelected((s) => new Set([...s].filter((id) => docList.some((d) => d.id === id))));
     } catch (e) {
       toast(`Cannot reach the API at ${API_URL}: ${(e as Error).message}`, "error");
@@ -43,7 +39,7 @@ export default function App() {
 
   useEffect(() => { refresh(); }, [refresh]);
 
-  const busy = docs.some((d) => d.status === "pending" || d.status === "processing");
+  const busy = docs.some((d) => d.ingestions.some(isBusy));
   useEffect(() => {
     if (!busy) return;
     const timer = setInterval(refresh, 3000);
@@ -55,6 +51,7 @@ export default function App() {
     if (selected.size) filters.document_ids = [...selected];
     if (spec.modalities.length) filters.modalities = spec.modalities;
     if (spec.parser) filters.parser = spec.parser;
+    if (spec.metadata) filters.metadata = spec.metadata;
 
     setSearching(true);
     setLastQuery(spec.query);
@@ -112,7 +109,6 @@ export default function App() {
           <UploadPanel onUploaded={refresh} />
           <DocumentList
             docs={docs}
-            jobs={jobs}
             selected={selected}
             onToggle={toggle}
             onClearSelection={() => setSelected(new Set())}
@@ -128,7 +124,7 @@ export default function App() {
               columns={columns}
               query={lastQuery}
               onImage={setImage}
-              onView={(hit: Hit) => setOpenDoc({ id: hit.document_id, focusChunkId: hit.chunk_id })}
+              onView={(hit: Hit) => setOpenDoc({ id: hit.document_id, focusChunkId: hit.chunk_id, focusParser: hit.parser })}
               onPage={setPageHit}
             />
           ) : (
@@ -141,9 +137,10 @@ export default function App() {
 
       {drawerDoc && (
         <DocumentDrawer
+          key={`${drawerDoc.id}-${openDoc?.focusChunkId ?? ""}`}
           doc={drawerDoc}
-          job={jobs[drawerDoc.id]}
           focusChunkId={openDoc?.focusChunkId}
+          focusParser={openDoc?.focusParser}
           onClose={() => setOpenDoc(null)}
           onChanged={refresh}
           onImage={setImage}

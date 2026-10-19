@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { ImageIcon, Loader2, Search, SlidersHorizontal } from "lucide-react";
-import { PARSERS, type Modality, type Parser, type SearchMode } from "../lib/api";
+import { parseObject, PARSERS, type Modality, type Parser, type SearchMode } from "../lib/api";
 import { Card, inputClass, Segmented } from "./ui";
 
 export interface SearchSpec {
@@ -15,6 +15,7 @@ export interface SearchSpec {
   rerankTop: number;
   modalities: Modality[];
   parser?: Parser;
+  metadata?: Record<string, unknown>;
 }
 
 const MODE_HINT: Record<SearchMode, string> = {
@@ -35,8 +36,10 @@ export function SearchPanel({ busy, scope, onSearch }: { busy: boolean; scope: s
   const [rerankTop, setRerankTop] = useState(30);
   const [modalities, setModalities] = useState<Modality[]>([]);
   const [parser, setParser] = useState<Parser | "">("");
+  const [metadata, setMetadata] = useState("");
 
-  const canSearch = kind === "text" ? query.trim().length > 0 : !!image;
+  const parsedMetadata = parseObject(metadata);
+  const canSearch = (kind === "text" ? query.trim().length > 0 : !!image) && parsedMetadata !== undefined;
 
   const [preview, setPreview] = useState<string>();
   useEffect(() => {
@@ -51,7 +54,7 @@ export function SearchPanel({ busy, scope, onSearch }: { busy: boolean; scope: s
     if (!canSearch || busy) return;
     onSearch({
       kind, query: query.trim(), image, mode, rerank, compare: kind === "text" && compare,
-      topK, candidates, rerankTop, modalities, parser: parser || undefined,
+      topK, candidates, rerankTop, modalities, parser: parser || undefined, metadata: parsedMetadata ?? undefined,
     });
   }
 
@@ -130,6 +133,15 @@ export function SearchPanel({ busy, scope, onSearch }: { busy: boolean; scope: s
                 {(Object.keys(PARSERS) as Parser[]).map((p) => (
                   <Chip key={p} active={parser === p} onClick={() => setParser(p)}>{p}</Chip>
                 ))}
+              </div>
+              <div className="flex items-center gap-1.5 text-xs">
+                <span className="w-14 shrink-0 text-slate-500">Metadata</span>
+                <input
+                  value={metadata}
+                  onChange={(e) => setMetadata(e.target.value)}
+                  placeholder='{"project": "churn"}'
+                  className={`${inputClass} py-1 font-mono text-xs ${parsedMetadata === undefined ? "border-rose-400" : ""}`}
+                />
               </div>
             </div>
           </div>

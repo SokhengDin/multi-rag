@@ -18,8 +18,14 @@ QUERY_TSQUERY = "replace(plainto_tsquery('simple', :query_text)::text, '&', '|')
 BINARY_ORDER = f"binary_quantize(c.embedding)::bit({EMBEDDING_DIM}) <~> binary_quantize({QUERY_VECTOR})::bit({EMBEDDING_DIM})"
 
 HIT_COLUMNS = """
-    c.id AS chunk_id, c.document_id, d.filename, c.chunk_index, c.modality,
-    c.content, c.page, c.heading_path, c.json_path, c.image_path, c.metadata->>'parser' AS parser, c.metadata->'boxes' AS boxes
+    c.id AS chunk_id, c.document_id, d.filename, c.job_id, j.parser, c.chunk_index, c.modality,
+    c.content, c.page, c.heading_path, c.json_path, c.boxes, c.image_path
+"""
+
+HIT_JOINS = """
+    JOIN chunks         c ON c.id = ranked.id
+    JOIN documents      d ON d.id = c.document_id
+    JOIN ingestion_jobs j ON j.id = c.job_id
 """
 
 
@@ -35,14 +41,13 @@ def dense_search(
     _tune_hnsw(session, candidates)
 
     sql = f"""
-        WITH dense AS (
+        WITH ranked AS (
             {_dense_ranked(where)}
         )
-        SELECT {HIT_COLUMNS}, 1 - dense.distance AS score, dense.rank AS dense_rank
-        FROM dense
-        JOIN chunks    c ON c.id = dense.id
-        JOIN documents d ON d.id = c.document_id
-        ORDER BY dense.rank
+        SELECT {HIT_COLUMNS}, 1 - ranked.distance AS score, ranked.rank AS dense_rank
+        FROM ranked
+        {HIT_JOINS}
+        ORDER BY ranked.rank
         LIMIT :top_k
     """
     params |= {"query_vector": str(query_vector), "candidates": candidates, "top_k": top_k}
@@ -105,11 +110,10 @@ def hybrid_search(
             ORDER BY score DESC
             LIMIT :top_k
         )
-        SELECT {HIT_COLUMNS}, fused.score, fused.dense_rank, fused.fulltext_rank, fused.sparse_rank
-        FROM fused
-        JOIN chunks    c ON c.id = fused.id
-        JOIN documents d ON d.id = c.document_id
-        ORDER BY fused.score DESC
+        SELECT {HIT_COLUMNS}, ranked.score, ranked.dense_rank, ranked.fulltext_rank, ranked.sparse_rank
+        FROM fused ranked
+        {HIT_JOINS}
+        ORDER BY ranked.score DESC
     """
     params |= {
         "query_text"   : query_text,
@@ -147,10 +151,13 @@ def _where(filters: SearchFilters) -> tuple[str, dict[str, Any]]:
         clauses.append("c.modality = ANY(CAST(:modalities AS modality[]))")
         params["modalities"] = [m.value for m in filters.modalities]
 
-    metadata = {**(filters.metadata or {}), **({"parser": filters.parser} if filters.parser else {})}
-    if metadata:
-        clauses.append("c.metadata @> CAST(:metadata AS jsonb)")
-        params["metadata"] = json.dumps(metadata)
+    if filters.parser:
+        clauses.append("c.job_id IN (SELECT id FROM ingestion_jobs WHERE parser = :parser)")
+        params["parser"] = filters.parser
+
+    if filters.metadata:
+        clauses.append("c.document_id IN (SELECT id FROM documents WHERE metadata @> CAST(:metadata AS jsonb))")
+        params["metadata"] = json.dumps(filters.metadata)
 
     return " AND ".join(clauses) or "TRUE", params
 

@@ -1,13 +1,14 @@
 import io
+import uuid
 
 from PIL.Image import Image
 from pgvector import SparseVector
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app import logger
 from app.core.config import settings
-from app.db.model import SPARSE_DIM, ChunkModel, DocumentModel, IngestionJobModel, Modality
+from app.db.model import SPARSE_DIM, ChunkModel, IngestionJobModel, Modality
 from app.providers.embedder import load_dense_embedder, load_sparse_embedder
 from app.providers.vlm import LocalVLM, MLXVLM, load_vlm
 from app.rag.ingestion.captioner import describe_image
@@ -17,7 +18,7 @@ from app.utils import minio_storage as storage
 
 
 class IngestionPipeline:
-    """Download -> parse -> chunk -> caption (vlm only) -> embed -> replace the document's chunks."""
+    """Download -> parse -> chunk -> caption (vlm only) -> embed -> replace this parser's chunks of the document."""
 
     def __init__(self) -> None:
         self.embedder = load_dense_embedder()
@@ -31,7 +32,9 @@ class IngestionPipeline:
             self._vlm = load_vlm()
         return self._vlm
 
-    def run(self, session: Session, job: IngestionJobModel) -> int:
+    def run(self, session: Session, job: IngestionJobModel) -> list[uuid.UUID]:
+        """Adds the job's chunks and deletes the previous ones of the same parser, uncommitted.
+        Returns the replaced jobs, whose images remove_images() deletes after the commit."""
         document  = job.document
         tokenizer = self.embedder.tokenizer
 
@@ -54,49 +57,64 @@ class IngestionPipeline:
         dense  = self.embedder.encode_documents([self.embedder.document_input(c.content, _title(c), c.image) for c in chunks])
         sparse = self.sparse.encode_documents(texts) if self.sparse else [None] * len(chunks)
 
-        session.execute(delete(ChunkModel).where(ChunkModel.document_id == document.id))
+        replaced = list(session.scalars(
+            select(IngestionJobModel.id).where(
+                IngestionJobModel.document_id == document.id,
+                IngestionJobModel.parser      == job.parser,
+                IngestionJobModel.id          != job.id,
+            )
+        ))
+        session.execute(delete(ChunkModel).where(ChunkModel.job_id.in_(replaced)))
         session.add_all(
-            self._to_row(document, job.parser, index, chunk, vector, sparse_vector)
+            self._to_row(job, index, chunk, vector, sparse_vector)
             for index, (chunk, vector, sparse_vector) in enumerate(zip(chunks, dense, sparse))
         )
-        document.num_chunks = len(chunks)
 
-        return len(chunks)
+        job.num_chunks             = len(chunks)
+        job.embedding_model        = self.embedder.model_id
+        job.sparse_embedding_model = self.sparse.model_id if self.sparse else None
+
+        return replaced
+
+    @staticmethod
+    def remove_images(document_id: uuid.UUID, job_ids: list[uuid.UUID]) -> None:
+        for job_id in job_ids:
+            storage.delete_prefix(_image_prefix(document_id, job_id))
 
     def _to_row(
         self,
-        document      : DocumentModel,
-        parser        : str,
+        job           : IngestionJobModel,
         index         : int,
         chunk         : Chunk,
         vector        : list[float],
         sparse_vector : dict[int, float] | None,
     ) -> ChunkModel:
         return ChunkModel(
-            document_id  = document.id,
+            document_id  = job.document_id,
+            job_id       = job.id,
             chunk_index  = index,
             modality     = chunk.modality,
             content      = chunk.content,
-            image_path   = self._upload_image(document, index, chunk.image) if chunk.image else None,
+            image_path   = _upload_image(job, index, chunk.image) if chunk.image else None,
             token_count  = chunk.token_count,
             page         = chunk.page,
             heading_path = chunk.heading_path,
             json_path    = chunk.json_path,
+            boxes        = chunk.boxes,
 
-            embedding       = vector,
-            embedding_model = self.embedder.model_id,
-
-            sparse_embedding       = SparseVector(sparse_vector, SPARSE_DIM) if sparse_vector else None,
-            sparse_embedding_model = self.sparse.model_id if self.sparse else None,
-
-            metadata_ = {"parser": parser, **({"boxes": chunk.boxes} if chunk.boxes else {})},
+            embedding        = vector,
+            sparse_embedding = SparseVector(sparse_vector, SPARSE_DIM) if sparse_vector else None,
         )
 
-    @staticmethod
-    def _upload_image(document: DocumentModel, index: int, image: Image) -> str:
-        buffer = io.BytesIO()
-        image.save(buffer, format="PNG")
-        return storage.upload_bytes(f"documents/{document.id}/images/{index}.png", buffer.getvalue(), "image/png")
+
+def _image_prefix(document_id: uuid.UUID, job_id: uuid.UUID) -> str:
+    return f"documents/{document_id}/jobs/{job_id}/"
+
+
+def _upload_image(job: IngestionJobModel, index: int, image: Image) -> str:
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    return storage.upload_bytes(f"{_image_prefix(job.document_id, job.id)}{index}.png", buffer.getvalue(), "image/png")
 
 
 def _title(chunk: Chunk) -> str | None:
